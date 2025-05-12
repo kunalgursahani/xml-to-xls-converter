@@ -49,11 +49,9 @@ const upload = multer({
 // Function to clean and fix XML
 async function cleanAndFixXML(xmlString) {
     try {
-        // Remove BOM and invalid characters
         xmlString = xmlString.replace(/^\uFEFF/, '')
             .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '');
 
-        // Fix common XML issues
         xmlString = xmlString
             .replace(/&(?!(?:amp|lt|gt|quot|apos);)/g, '&amp;')
             .replace(/<\s*\/([^>]+)\s*>/g, '</$1>')
