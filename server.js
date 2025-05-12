@@ -9,26 +9,15 @@ const { promisify } = require('util');
 const readFileAsync = promisify(fs.readFile);
 const writeFileAsync = promisify(fs.writeFile);
 const unlinkAsync = promisify(fs.unlink);
-const passport = require('passport');
-const xsenv = require('@sap/xsenv');
-const xssec = require('@sap/xssec');
-const cfenv = require('cfenv');
 
 // Initialize express app
 const app = express();
-const appEnv = cfenv.getAppEnv();
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
-// Configure SAP BTP authentication
-const services = xsenv.getServices({ xsuaa: { tag: 'xsuaa' } });
-passport.use('JWT', new xssec.JWTStrategy(services.xsuaa));
-app.use(passport.initialize());
-app.use(passport.authenticate('JWT', { session: false }));
-
-// Configure multer for file upload with size limits
+// Configure multer for file upload
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         const uploadDir = 'uploads';
@@ -38,7 +27,6 @@ const storage = multer.diskStorage({
         cb(null, uploadDir);
     },
     filename: function (req, file, cb) {
-        // Sanitize filename
         const sanitizedFilename = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
         cb(null, Date.now() + '-' + sanitizedFilename);
     }
@@ -47,7 +35,7 @@ const storage = multer.diskStorage({
 const upload = multer({
     storage: storage,
     limits: {
-        fileSize: 100 * 1024 * 1024, // 100MB limit
+        fileSize: 100 * 1024 * 1024 // 100MB limit
     },
     fileFilter: (req, file, cb) => {
         if (file.mimetype === 'text/xml' || file.mimetype === 'application/xml') {
@@ -67,18 +55,13 @@ async function cleanAndFixXML(xmlString) {
 
         // Fix common XML issues
         xmlString = xmlString
-            // Fix unescaped ampersands
             .replace(/&(?!(?:amp|lt|gt|quot|apos);)/g, '&amp;')
-            // Fix spaces in closing tags
             .replace(/<\s*\/([^>]+)\s*>/g, '</$1>')
-            // Fix spaces in opening tags
             .replace(/<\s*([^>]+)\s*>/g, '<$1>')
-            // Remove extra whitespace
             .replace(/\s+/g, ' ')
             .replace(/>\s+</g, '><')
             .trim();
 
-        // Ensure XML has a root element
         if (!xmlString.match(/<[^>]+>.*<\/[^>]+>/)) {
             xmlString = `<root>${xmlString}</root>`;
         }
@@ -90,57 +73,23 @@ async function cleanAndFixXML(xmlString) {
     }
 }
 
-// Function to parse XML with fallback options
+// Function to parse XML
 async function parseXML(xmlData) {
-    const parserOptions = [
-        {
-            explicitArray: false,
-            ignoreAttrs: false,
-            mergeAttrs: true,
-            explicitChildren: false,
-            explicitRoot: true,
-            tagNameProcessors: [xml2js.processors.stripPrefix],
-            valueProcessors: [xml2js.processors.parseBooleans, xml2js.processors.parseNumbers],
-            strict: false,
-            trim: true,
-            normalize: true,
-            normalizeTags: true,
-            charkey: 'value'
-        },
-        {
-            explicitArray: false,
-            ignoreAttrs: true,
-            mergeAttrs: false,
-            explicitChildren: false,
-            explicitRoot: true,
-            strict: false,
-            trim: true
-        },
-        {
-            explicitArray: false,
-            ignoreAttrs: true,
-            mergeAttrs: false,
-            explicitChildren: false,
-            explicitRoot: false,
-            strict: false,
-            trim: true
-        }
-    ];
+    const parser = new xml2js.Parser({
+        explicitArray: false,
+        ignoreAttrs: false,
+        mergeAttrs: true,
+        explicitChildren: false,
+        explicitRoot: true,
+        strict: false,
+        trim: true
+    });
 
-    let lastError = null;
-    for (const options of parserOptions) {
-        try {
-            const parser = new xml2js.Parser(options);
-            const result = await parser.parseStringPromise(xmlData);
-            return result;
-        } catch (error) {
-            lastError = error;
-            console.warn(`Parser attempt failed with options:`, options);
-            continue;
-        }
+    try {
+        return await parser.parseStringPromise(xmlData);
+    } catch (error) {
+        throw new Error(`Error parsing XML: ${error.message}`);
     }
-
-    throw new Error(`All parser attempts failed. Last error: ${lastError.message}`);
 }
 
 // Function to flatten nested objects
@@ -156,7 +105,7 @@ function flattenObject(obj, prefix = '') {
     }, {});
 }
 
-// Convert XML to XLS with progress tracking
+// Convert XML to XLS
 async function convertXmlToXls(xmlFilePath, progressCallback) {
     try {
         progressCallback(10, 'Reading XML file...');
@@ -172,19 +121,16 @@ async function convertXmlToXls(xmlFilePath, progressCallback) {
         const workbook = XLSX.utils.book_new();
 
         progressCallback(60, 'Processing data...');
-        // Function to process each node and create worksheets
         function processNode(node, parentPath = '') {
             if (typeof node === 'object' && node !== null) {
                 Object.entries(node).forEach(([key, value]) => {
                     const currentPath = parentPath ? `${parentPath}_${key}` : key;
                     
                     if (Array.isArray(value)) {
-                        // If it's an array, create a worksheet for it
                         const flattenedData = value.map(item => flattenObject(item));
                         const ws = XLSX.utils.json_to_sheet(flattenedData);
                         XLSX.utils.book_append_sheet(workbook, ws, currentPath);
                     } else if (typeof value === 'object') {
-                        // Recursively process nested objects
                         processNode(value, currentPath);
                     }
                 });
@@ -208,7 +154,7 @@ async function convertXmlToXls(xmlFilePath, progressCallback) {
 // Serve static files from the React app
 app.use(express.static(path.join(__dirname, 'client/build')));
 
-// Upload endpoint with progress tracking
+// Upload endpoint
 app.post('/api/upload', upload.single('file'), async (req, res) => {
     const cleanupFiles = async (files) => {
         for (const file of files) {
@@ -228,10 +174,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
         const xmlFilePath = req.file.path;
         let xlsFilePath = null;
 
-        // Create a progress tracking function
         const progressCallback = (progress, message) => {
-            // In a real application, you might want to use WebSocket or Server-Sent Events
-            // to send progress updates to the client
             console.log(`Progress: ${progress}% - ${message}`);
         };
 
@@ -242,12 +185,10 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
             throw error;
         }
 
-        // Send the file
         res.download(xlsFilePath, path.basename(xlsFilePath), async (err) => {
             if (err) {
                 console.error('Error sending file:', err);
             }
-            // Clean up files after sending
             await cleanupFiles([xmlFilePath, xlsFilePath]);
         });
     } catch (error) {
@@ -259,8 +200,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     }
 });
 
-// The "catchall" handler: for any request that doesn't
-// match one above, send back React's index.html file.
+// Catch-all handler
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'client/build/index.html'));
 });
@@ -274,15 +214,8 @@ app.use((err, req, res, next) => {
     });
 });
 
-// Start server with error handling
+// Start server
 const port = process.env.PORT || 5000;
-const server = app.listen(port, () => {
+app.listen(port, () => {
     console.log(`Server running on port ${port}`);
-}).on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-        console.error(`Port ${port} is already in use. Please try a different port.`);
-        process.exit(1);
-    } else {
-        console.error('Server error:', err);
-    }
 }); 

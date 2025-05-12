@@ -1,0 +1,56 @@
+_schema-version: '3.1'
+ID: xml-to-xls-converter
+version: 1.0.0
+description: "XML to XLS Converter Application"
+
+modules:
+  - name: xml-to-xls-converter
+    type: nodejs
+    path: .
+    parameters:
+      memory: 512M
+      instances: 1
+    provides:
+      - name: xml-to-xls-converter_api
+        properties:
+          srv-url: ${default-url}
+    requires:
+      - name: xml-to-xls-converter-destination
+      - name: xml-to-xls-converter-xsuaa
+
+resources:
+  - name: xml-to-xls-converter-destination
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: destination
+      service-plan: lite
+      config:
+        xsappname: xml-to-xls-converter-${space}
+        version: 1.0.0
+        destinations:
+          - name: xml-to-xls-converter
+            url: ~{srv-url}
+            forwardAuthToken: true
+
+  - name: xml-to-xls-converter-xsuaa
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: xsuaa
+      service-plan: application
+      config:
+        xsappname: xml-to-xls-converter-${space}
+        tenant-mode: dedicated
+        scopes:
+          - name: $XSAPPNAME.Converter
+            description: Converter Role
+          - name: $XSAPPNAME.Uploader
+            description: Uploader Role
+        role-templates:
+          - name: Converter
+            description: Converter Role Template
+            scope-references:
+              - $XSAPPNAME.Converter
+          - name: Uploader
+            description: Uploader Role Template
+            scope-references:
+              - $XSAPPNAME.Uploader 
