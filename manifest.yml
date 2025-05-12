@@ -1,0 +1,13 @@
+applications:
+- name: xml-to-xls-converter
+  path: .
+  memory: 512M
+  instances: 1
+  buildpacks:
+    - nodejs_buildpack
+  env:
+    NODE_ENV: production
+    NPM_CONFIG_PRODUCTION: false
+  services:
+    - xsuaa-service
+  command: npm start 
